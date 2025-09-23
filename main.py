@@ -50,7 +50,7 @@ BASE_URL = "https://www.foodsafetykorea.go.kr"
 AJAX_SEARCH_URL = f"{BASE_URL}/portal/healthyfoodlife/searchHomeHFProc.do"
 DETAIL_URL = f"{BASE_URL}/portal/healthyfoodlife/searchHomeHFDetail.do"
 
-def search_omega3_products(page_no=1, search_term="오메가3", show_cnt=50):
+def search_omega3_products(page_no=1, search_term="셀로닉스", show_cnt=10):
     """오메가3 건강기능식품 검색"""
     # 페이지 인덱스 계산 (1부터 시작)
     start_idx = (page_no - 1) * show_cnt + 1
@@ -106,35 +106,99 @@ def search_omega3_products(page_no=1, search_term="오메가3", show_cnt=50):
         print(f"[페이지 {page_no}] 예상치 못한 오류: {e}")
         return None
 
-def get_product_detail_rancidity(prdlst_report_no):
+def get_product_detail_rancidity(prdlst_report_no, search_term="셀로닉스",show_cnt=10,start_idx=1):
     """개별 제품의 상세 정보에서 산패도 정보 조회"""
     detail_params = {
-        "prdlst_report_no": prdlst_report_no,
+        "menu_no": "2672",
         "menu_grp": "MENU_NEW01", 
-        "menu_no": "2672"
+        "menuNm": "건강기능식품 검색",
+        "copyUrl": "https://www.foodsafetykorea.go.kr:443/portal/healthyfoodlife/searchHomeHFDetail.do?prdlstReportLedgNo="+prdlst_report_no
+        +"&search_word=" + search_term
+        +"&search_code=01&start_idx=1&show_cnt=10&menu_no=2823&menu_grp=MENU_NEW01",
+        "mberId": "",
+        "mberNo": "",
+        "favorListCnt": "0",
+        "search_code": "05",  # 05: 제품명 또는 업소명
+        "search_word": search_term,
+        "show_cnt": str(show_cnt),  # 페이지당 표시 개수
+        "start_idx": str(start_idx),  # 시작 인덱스 (1부터 시작!)
+        "prdlst_report_no": prdlst_report_no
     }
     
+
     try:
+        print(f"    상세 페이지 요청: {prdlst_report_no}")
+        
+        # 상세 페이지 요청
         response = session.get(DETAIL_URL, params=detail_params, headers=get_headers(), timeout=30)
         response.encoding = "utf-8"
+        
+        print(f"    응답 상태: {response.status_code}")
+        print(f"    응답 길이: {len(response.text)} 문자")
+        
+        # 응답 내용 확인 (디버깅용)
+        if "기준 및 규격" not in response.text:
+            print(f"    ❌ '기준 및 규격' 텍스트를 찾을 수 없음")
+            # 응답 내용의 일부를 출력해서 확인
+            print(f"    응답 샘플: {response.text[:500]}...")
+            return None
+        
         soup = BeautifulSoup(response.text, "html.parser")
         
-        # 기준 및 규격 찾기
+        # 방법 1: 정확한 HTML 구조로 찾기
         standard_cell = None
+        
+        # <th>기준 및 규격</th> 찾기
         for th in soup.find_all("th"):
-            if "기준" in th.get_text() and "규격" in th.get_text():
-                standard_cell = th.find_next("td")
-                break
+            th_text = th.get_text(strip=True)
+            if "기준" in th_text and "규격" in th_text:
+                print(f"    ✅ '기준 및 규격' th 태그 발견: {th_text}")
+                # 같은 행의 td 찾기
+                tr = th.find_parent("tr")
+                if tr:
+                    standard_cell = tr.find("td")
+                    if standard_cell:
+                        print(f"    ✅ 기준 및 규격 td 태그 발견")
+                        break
         
         if not standard_cell:
+            print(f"    ❌ 기준 및 규격 셀을 찾을 수 없음")
+            
+            # 방법 2: 더 넓은 범위로 검색
+            print(f"    대안 검색 시도...")
+            all_tds = soup.find_all("td")
+            for td in all_tds:
+                td_text = td.get_text()
+                if "산가" in td_text and "과산화물가" in td_text:
+                    print(f"    ✅ 산패도 정보가 포함된 td 발견!")
+                    standard_cell = td
+                    break
+        
+        if not standard_cell:
+            print(f"    ❌ 산패도 정보를 찾을 수 없음")
             return None
             
+        # 기준 및 규격 텍스트 추출
         standard_text = standard_cell.get_text()
+        print(f"    📄 기준 및 규격 텍스트 길이: {len(standard_text)} 문자")
+        print(f"    📄 텍스트 샘플: {standard_text[:200]}...")
         
         # 산패도 관련 정보 추출
         rancidity_info = extract_rancidity_info(standard_text)
         
+        if rancidity_info:
+            print(f"    ✅ 산패도 정보 추출 성공: {rancidity_info}")
+        else:
+            print(f"    ❌ 산패도 정보 추출 실패")
+        
         return rancidity_info
+            
+    except Exception as e:
+        print(f"    ❌ 상세 정보 조회 실패 ({prdlst_report_no}): {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
             
     except Exception as e:
         print(f"    상세 정보 조회 실패 ({prdlst_report_no}): {e}")
@@ -149,46 +213,72 @@ def extract_rancidity_info(standard_text):
         "총산화가": None
     }
     
-    # 산가 추출 (Acid Value)
-    acid_pattern = r"산가[:\s]*([0-9.]+)\s*이하"
-    acid_match = re.search(acid_pattern, standard_text, re.IGNORECASE)
-    if acid_match:
-        rancidity_info["산가"] = float(acid_match.group(1))
+    print(f"    🔍 산패도 정보 추출 시작...")
     
-    # 과산화물가 추출 (Peroxide Value)
-    peroxide_pattern = r"과산화물가[:\s]*([0-9.]+)\s*이하"
-    peroxide_match = re.search(peroxide_pattern, standard_text, re.IGNORECASE)
-    if peroxide_match:
-        rancidity_info["과산화물가"] = float(peroxide_match.group(1))
+    # 산가 추출 (더 정확한 패턴)
+    acid_patterns = [
+        r"산가\s*[:：]\s*([0-9.]+)\s*이하",
+        r"산가\s*([0-9.]+)\s*이하",
+        r"ㆍ산가\s*[:：]\s*([0-9.]+)\s*이하"
+    ]
+    for pattern in acid_patterns:
+        acid_match = re.search(pattern, standard_text, re.IGNORECASE)
+        if acid_match:
+            rancidity_info["산가"] = float(acid_match.group(1))
+            print(f"    ✅ 산가 발견: {rancidity_info['산가']}")
+            break
     
-    # 아니시딘가 추출 (Anisidine Value)
+    # 과산화물가 추출
+    peroxide_patterns = [
+        r"과산화물가\s*[:：]\s*([0-9.]+)\s*이하",
+        r"과산화물가\s*([0-9.]+)\s*이하",
+        r"ㆍ과산화물가\s*[:：]\s*([0-9.]+)\s*이하"
+    ]
+    for pattern in peroxide_patterns:
+        peroxide_match = re.search(pattern, standard_text, re.IGNORECASE)
+        if peroxide_match:
+            rancidity_info["과산화물가"] = float(peroxide_match.group(1))
+            print(f"    ✅ 과산화물가 발견: {rancidity_info['과산화물가']}")
+            break
+    
+    # 아니시딘가 추출
     anisidine_patterns = [
-        r"아니시딘가[:\s]*([0-9.]+)\s*이하",
-        r"애니시딘가[:\s]*([0-9.]+)\s*이하"
+        r"아니시딘가\s*[:：]\s*([0-9.]+)\s*이하",
+        r"아니시딘가\s*([0-9.]+)\s*이하",
+        r"ㆍ아니시딘가\s*[:：]\s*([0-9.]+)\s*이하",
+        r"애니시딘가\s*[:：]\s*([0-9.]+)\s*이하"
     ]
     for pattern in anisidine_patterns:
         anisidine_match = re.search(pattern, standard_text, re.IGNORECASE)
         if anisidine_match:
             rancidity_info["아니시딘가"] = float(anisidine_match.group(1))
+            print(f"    ✅ 아니시딘가 발견: {rancidity_info['아니시딘가']}")
             break
     
-    # 총산화가 추출 (Total Oxidation Value, Totox)
+    # 총산화가 추출
     totox_patterns = [
-        r"총\s*산화가[:\s]*([0-9.]+)\s*이하",
-        r"총\s*옥시가[:\s]*([0-9.]+)\s*이하",
-        r"totox[:\s]*([0-9.]+)\s*이하"
+        r"총산화가\s*[:：]\s*([0-9.]+)\s*이하",
+        r"총산화가\s*([0-9.]+)\s*이하",
+        r"ㆍ총산화가\s*[:：]\s*([0-9.]+)\s*이하",
+        r"총\s*옥시가\s*[:：]\s*([0-9.]+)\s*이하",
+        r"totox\s*[:：]\s*([0-9.]+)\s*이하"
     ]
     for pattern in totox_patterns:
         totox_match = re.search(pattern, standard_text, re.IGNORECASE)
         if totox_match:
             rancidity_info["총산화가"] = float(totox_match.group(1))
+            print(f"    ✅ 총산화가 발견: {rancidity_info['총산화가']}")
             break
     
     # 산패도 정보가 하나라도 있으면 반환
-    if any(v is not None for v in rancidity_info.values()):
+    found_values = [k for k, v in rancidity_info.items() if v is not None]
+    if found_values:
+        print(f"    📊 추출된 산패도 정보: {found_values}")
         return rancidity_info
-    
-    return None
+    else:
+        print(f"    ❌ 산패도 정보 없음")
+        return None
+
 
 def check_rancidity_standards(rancidity_info):
     """산패도 기준 통과 여부 확인"""
@@ -213,7 +303,7 @@ def check_rancidity_standards(rancidity_info):
     
     return results
 
-def extract_product_info(response_data, include_rancidity=False):
+def extract_product_info(response_data, include_rancidity=False, search_term="셀로닉스", show_cnt=10, start_idx=1):
     """검색 결과에서 제품 정보 추출 (산패도 정보 포함)"""
     products = []
     
@@ -236,11 +326,12 @@ def extract_product_info(response_data, include_rancidity=False):
                 "총_개수": item.get("total_count", "")
             }
             
-            # 산패도 정보 추출 (필수)
+            # 산패도 정보 추출
             if include_rancidity and product_info["prdlstReportNo"]:
                 print(f"  ({i}/{len(response_data)}) {product_info['제품명']} 상세 정보 수집 중...")
                 
-                rancidity_info = get_product_detail_rancidity(product_info["prdlstReportNo"])
+                # search_term 제거하고 호출
+                rancidity_info = get_product_detail_rancidity(product_info["prdlstReportNo"], search_term, show_cnt, start_idx)
                 
                 if rancidity_info:
                     # 산패도 정보 추가
@@ -250,23 +341,25 @@ def extract_product_info(response_data, include_rancidity=False):
                     standards_check = check_rancidity_standards(rancidity_info)
                     product_info.update(standards_check)
                     
-                    print(f"    → 산패도 정보 발견!")
+                    print(f"    → ✅ 산패도 정보 발견!")
                 else:
-                    print(f"    → 산패도 정보 없음")
+                    print(f"    → ❌ 산패도 정보 없음")
                 
                 # 서버 부하 방지 (매우 중요!)
-                time.sleep(1.5)
+                time.sleep(2)
             
             products.append(product_info)
             
         except Exception as e:
             print(f"제품 정보 추출 오류: {e}")
+            import traceback
+            traceback.print_exc()
             continue
-    
+
     print(f"추출된 제품 수: {len(products)}")
     return products
 
-def collect_all_omega3_products(search_term="오메가3", show_cnt=50):
+def collect_all_omega3_products(search_term="셀로닉스", show_cnt=10):
     """모든 오메가3 제품 수집 (산패도 정보 포함)"""
     print(f"'{search_term}' 검색어로 모든 제품 수집을 시작합니다...")
     print("=" * 80)
@@ -300,7 +393,7 @@ def collect_all_omega3_products(search_term="오메가3", show_cnt=50):
                 break
         
         # 제품 정보 추출 (산패도 정보 포함)
-        products = extract_product_info(response_data, include_rancidity=True)
+        products = extract_product_info(response_data, include_rancidity=True, search_term=search_term)
         if not products:
             print(f"❌ {page} 페이지에서 제품 정보 추출 실패")
             break
@@ -359,7 +452,7 @@ def main():
     
     # 전체 오메가3 제품 수집 (산패도 정보 포함)
     print("🔍 1단계: 모든 오메가3 제품 수집 및 산패도 정보 추출")
-    all_products = collect_all_omega3_products(search_term="오메가3", show_cnt=50)
+    all_products = collect_all_omega3_products(search_term="셀로닉스", show_cnt=10, )
     
     if not all_products:
         print("❌ 수집된 제품이 없습니다.")
