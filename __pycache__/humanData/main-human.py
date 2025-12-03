@@ -34,15 +34,27 @@ def get_realistic_headers(referer=None):
 
 def json_to_csv(data_list, filename):
     """JSON 데이터를 UTF-8 CSV로 변환 (한글 깨짐 완전 해결)"""
+    """JSON 데이터를 UTF-8 CSV로 변환 (컬럼 숫자 순서 정렬)"""
     if not data_list:
         print(f"⚠️ 데이터 없음: {filename}")
         return False
     
-    # 모든 컬럼명 수집 (COLUMN1~COLUMN50 등)
+ # 모든 컬럼명 수집
     all_columns = set()
     for row in data_list:
         all_columns.update(row.keys())
-    columns = sorted(list(all_columns))
+    
+    # COLUMN 숫자 순서대로 정렬 (자연 정렬)
+    def natural_sort_key(col):
+        """COLUMN1, COLUMN2, ..., COLUMN10 순서로 정렬"""
+        if col.startswith('COLUMN'):
+            try:
+                return int(col.replace('COLUMN', ''))
+            except:
+                return 999999  # 숫자 아닌 경우 맨 뒤
+        return 999999
+    
+    columns = sorted(list(all_columns), key=natural_sort_key)
     
     # UTF-8 BOM 추가 (Excel에서 한글 정상 표시)
     bom = '\ufeff'
@@ -173,17 +185,17 @@ if __name__ == "__main__":
     success_count = 0
     
     # 3. TEST_CASES 먼저 실행
-    print("\n🎯 TEST_CASES 실행...")
+    """ print("\n🎯 TEST_CASES 실행...")
     for signgu_cd, year in TEST_CASES:
         if signgu_cd in gyenggi_regions:
             if download_for_region(session, signgu_cd, gyenggi_regions[signgu_cd], year):
                 success_count += 1
-        time.sleep(5) #ip보호
+        time.sleep(60) #ip보호
     
-    print(f"\n✅ TEST 완료: {success_count}/{len(TEST_CASES)} 성공")
+    print(f"\n✅ TEST 완료: {success_count}/{len(TEST_CASES)} 성공") """
     
     # 4. 전체 자동 실행 원하면 아래 주석 해제
-    # print("\n🚀 전체 경기 40개 자동 다운로드 시작...")
-    # for signgu_cd, signgu_name in gyenggi_regions.items():
-    #     download_for_region(session, signgu_cd, signgu_name, "2025")
-    #     time.sleep(2)
+    print("\n🚀 전체 경기 40개 자동 다운로드 시작...")
+    for signgu_cd, signgu_name in gyenggi_regions.items():
+        download_for_region(session, signgu_cd, signgu_name, "2025")
+        time.sleep(60) #ip보호
